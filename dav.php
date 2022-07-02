@@ -11,9 +11,11 @@
 */
 
 $_CONFIG = array(
-  'user'     => 'user',
-  'password' => 'CHANGEME',
-  'root'     => dirname(__FILE__)
+  'user'            => '',
+  'password'        => 'CHANGEME',
+  'admin_password'  => 'CHANGEME',
+  'root'            => dirname(__FILE__), 
+  'session_timeout' => 900
 );
 
 /*
@@ -620,14 +622,31 @@ function script_url() {
 /******************************************************************************/
 /******************************************************************************/
 
+
+function session() {
+  session_name('PHP-WebDAV');
+  session_start();
+}
+
+function array_validate(&$array, $defaults) {
+  foreach ($defaults as $key => $value)
+    if (!isset($array[$key]))
+      $array[$key] = $value;
+}
+
+function array_unset(&$array, $keys) {
+  foreach ($keys as $key)
+    unset($array[$key]);
+}
+
 function page_css() {
   header('Content-Type: text/css');
 ?>
   #content {
     position: absolute;
-    top: 5%;
+    top: 25px;
     left: 50%;
-    transform: translate(-50%, -5%)
+    transform: translate(-50%, 0);
   }
 
   #title {
@@ -642,9 +661,11 @@ function page_css() {
 <?php
 }
 
-function page_js() {?>
+function page_js() {
+?>
   // JS
-<?php }
+<?php
+}
 
 function page_welcome() {
   if ($_SERVER['REQUEST_METHOD'] == 'POST') {
@@ -655,44 +676,145 @@ function page_welcome() {
   }
 
   $dom = base_page('PHP-WebDAV');
-  $content = (new Element ($dom->getElementById('content')));
+  $content = (new Element($dom->getElementById('content')));
   $content->add('p')->append('blabla<br/>blabla');
-  $content->add('p')->append('<a href="'.$_SERVER['SCRIPT_NAME'].'?admin">Admin</a>');
+  $content->add('p')->append('click: ')->add('a', ['href' => $_SERVER['SCRIPT_NAME'].'?admin'], 'Admin')->parent()->append('.');
 
   echo $dom->saveHTML();
 }
 
 function page_user() {
+  global $_CONFIG;
+
+  session();
+  array_validate($_SESSION, ['user' => '', 'user_remote_addr' => '', 'user_login_error' => false,
+                             'user_validated' => false, 'user_last_seen' => 0]);
+
   if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    // FIXME: process form.
+    if (!$_SESSION['user_validated']) {
+      array_validate($_POST, ['user' => '', 'password' => '']);
+
+      if ($_POST['user'] != $_CONFIG['user'] || $_POST['password'] != $_CONFIG['password']) {
+        if ($_POST['user'] != '' || $_POST['password'] != '')
+          $_SESSION['user_login_error'] = true;          
+      } else {
+        session_regenerate_id(true);
+
+        $_SESSION['user'] = $_CONFIG['user'];
+        $_SESSION['user_remote_addr'] = $_SERVER['REMOTE_ADDR'];
+        $_SESSION['user_last_seen'] = time();
+        $_SESSION['user_validated'] = true;
+      }
+    } elseif (isset($_POST['submit']) && $_POST['submit'] == 'Logout') {
+      array_unset($_SESSION, ['user', 'user_remote_addr', 'user_validated', 'user_last_seen', 'user_login_error']);
+    } else {
+      user_post();
+    }
 
     header('Location: '.$_SERVER['REQUEST_URI']);
     exit;
   }
 
+  if (!$_SESSION['user_validated'] || $_SESSION['user_remote_addr'] != $_SERVER['REMOTE_ADDR'] ||    
+      $_SESSION['user_last_seen'] < (time() - $_CONFIG['session_timeout'])) {
+    array_unset($_SESSION, ['user', 'user_remote_addr', 'user_last_seen']);
+    $_SESSION['user_validated'] = false;
+  } else {
+    $_SESSION['user_last_seen'] = time(); 
+  }
+
   $dom = base_page('PHP-WebDAV');
-  $form = (new Element ($dom->getElementById('content')))->add('form', array('method' => 'post'));
-  $form->add('p')->add('div', array('class' => 'right'))->append('Username:&#160;<input type="text" name="username" width="20"/>');
-  $form->add('p')->add('div', array('class' => 'right'))->append('Password:&#160;<input type="password" name="password" placeholder="********" width="20"/>');
-  $form->add('p')->add('div', array('class' => 'right'))->append('<input type="submit" value="Login"/>');
+  $form = (new Element($dom->getElementById('content')))->add('form', ['method' => 'post']);
+  
+  if (!$_SESSION['user_validated']) {
+    $div = $form->add('p')->add('div', ['class' => 'right'])->append('Username:&#160;');
+    $div->add('input', ['type' => 'text', 'name' => 'user', 'width' => '20']);
+    $div = $form->add('p')->add('div', ['class' => 'right'])->append('Password:&#160;');
+    $div->add('input', ['type' => 'password', 'name' => 'password', 'placeholder' => '********', 'width' => '20']);
+    $form->add('p')->add('div', ['class' => 'right'])->add('input', ['type' => 'submit', 'value' => 'Login']);
+    if ($_SESSION['user_login_error']) {
+      $form->add('p')->add('div', ['class' => 'right'])->append('Username and/or password invalid.');
+      $_SESSION['user_login_error'] = false;
+    }
+  } else {
+    user($dom, $form, $_SESSION['user']);
+  }
 
   echo $dom->saveHTML();
 }
 
+function user(&$dom, &$form, $user) {
+  $form->add('p')->append('Hi '.$user.'!');
+  $form->add('p')->add('input', ['type' => 'submit', 'name' => 'submit', 'value' => 'Logout']);
+}
+
+function user_post() {
+  // FIXME: process form
+}
+
 function page_admin() {
+  global $_CONFIG;
+
+  session();
+  array_validate($_SESSION, ['admin_remote_addr' => '', 'admin_login_error' => false,
+                             'admin_validated' => false, 'admin_last_seen' => 0]);
+
   if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    // FIXME: process form.
+    if (!$_SESSION['admin_validated']) {
+      array_validate($_POST, ['password' => '']);
+
+      if ($_POST['password'] != $_CONFIG['admin_password']) {
+        if ($_POST['password'] != '')
+          $_SESSION['admin_login_error'] = true;          
+      } else {
+        session_regenerate_id(true);
+
+        $_SESSION['admin_remote_addr'] = $_SERVER['REMOTE_ADDR'];
+        $_SESSION['admin_last_seen'] = time();
+        $_SESSION['admin_validated'] = true;
+      }
+    } elseif (isset($_POST['submit']) && $_POST['submit'] == 'Logout') {
+      array_unset($_SESSION, ['admin_remote_addr', 'admin_validated', 'admin_last_seen', 'admin_login_error']);
+    } else {
+      admin_post();
+    }
 
     header('Location: '.$_SERVER['REQUEST_URI']);
     exit;
   }
 
+  if (!$_SESSION['admin_validated'] || $_SESSION['admin_remote_addr'] != $_SERVER['REMOTE_ADDR'] ||    
+      $_SESSION['admin_last_seen'] < (time() - $_CONFIG['session_timeout'])) {
+    array_unset($_SESSION, ['admin_remote_addr', 'admin_last_seen']);
+    $_SESSION['admin_validated'] = false;
+  } else {
+    $_SESSION['admin_last_seen'] = time(); 
+  }
+
   $dom = base_page('PHP-WebDAV Admin');
-  $form = (new Element ($dom->getElementById('content')))->add('form', array('method' => 'post'));
-  $form->append('Password:&#160;')->append('<input type="password" name="password" placeholder="********"/>&#160;');
-  $form->append('<input type="submit" value="Login"/><br/>');
+  $form = (new Element($dom->getElementById('content')))->add('form', ['method' => 'post']);
+
+  if (!$_SESSION['admin_validated']) {
+    $form->append('Password:&#160;')->add('input', array('type' => 'password', 'name' => 'password', 'placeholder' => '********'));
+    $form->append('&#160;')->add('input', array('type' => 'submit', 'value' => 'Login'));
+    if ($_SESSION['admin_login_error']) {
+      $form->add('p')->append('Password invalid.');
+      $_SESSION['admin_login_error'] = false;
+    }
+  } else {
+    admin($dom, $form);
+  }
 
   echo $dom->saveHTML();
+}
+
+function admin(&$dom, &$form) {
+  $form->add('p')->append('Hi Admin!');
+  $form->add('p')->add('input', ['type' => 'submit', 'name' => 'submit', 'value' => 'Logout']);
+}
+
+function admin_post() {
+  // FIXME: process form
 }
 
 function base_page($title) {
@@ -719,20 +841,20 @@ class Element {
   }
 
   public function add($name, $attributes = null, $value = null) {
-    $this->element->appendChild($tag = $this->dom->createElement($name));
+    $this->element->appendChild($node = $this->dom->createElement($name));
 
     // FIXME: set '' as id namespace instead of xml:
     if ($attributes !== null)
       foreach ($attributes as $attribute_name => $attribute_value) {
-        $tag->setAttribute($attribute_name, $attribute_value);
+        $node->setAttribute($attribute_name, $attribute_value);
         if ($attribute_name == 'id')
-          $tag->setIdAttribute('id', true);
+          $node->setIdAttribute('id', true);
       }
 
     if ($value !== null)
-      $tag->appendChild($this->dom->createTextNode($value));
+      $node->appendChild($this->dom->createTextNode($value));
 
-    return new Element($tag);
+    return new Element($node);
   }
 
   public function append($xml) {
@@ -741,5 +863,9 @@ class Element {
     $this->element->appendChild($fragment);
     
     return $this;
+  }
+  
+  public function parent() {
+    return new Element($this->element->parentNode);
   }
 }
