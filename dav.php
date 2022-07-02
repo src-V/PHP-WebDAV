@@ -43,14 +43,16 @@ $_CONFIG = array(
 /******************************************************************************/
 /******************************************************************************/
 
-date_default_timezone_set('UTC');
-setup_xattr();
 main();
 
 function main() {
+  date_default_timezone_set('UTC');
+
   check_web_interface();
 
   authenticate_or_exit();
+
+  setup_xattr();
 
   call_if_exists('method_'.strtolower($_SERVER['REQUEST_METHOD']));
 
@@ -62,15 +64,20 @@ function davlog($text) {
 }
 
 function check_web_interface() {
-  // FIXME: Welcome page & admin change pass gimeout based on file modify/create time.
-  if (($_SERVER['REQUEST_METHOD'] == 'GET' || $_SERVER['REQUEST_METHOD'] == 'POST') && 
-      ($_SERVER['QUERY_STRING'] == 'user' || $_SERVER['QUERY_STRING'] == 'admin')) {
-    if ($_SERVER['QUERY_STRING'] == 'user')
-      user();
-    else
-      admin();
-    exit;
-  }
+  if (array_search($_SERVER['REQUEST_METHOD'], array('GET', 'POST')) === false)
+    return;
+
+  // FIXME: Welcome page & admin change pass timeout based on file modify/create time.
+
+  // FIXME: remove welcome test
+  // Don't function_exists(). Not authenticated yet.
+  if (array_search($_SERVER['QUERY_STRING'], array('css', 'js', 'user', 'admin', 'welcome')) === false)
+    return;
+
+  $function = 'page_'.$_SERVER['QUERY_STRING'];
+  $function();
+
+  exit;
 }
 
 function auth_digest() {
@@ -79,7 +86,7 @@ function auth_digest() {
   $realm = 'Restricted area';
 
   //user => password
-  $users = array($_CONFIG['user'] => $_CONFIG['password');
+  $users = array($_CONFIG['user'] => $_CONFIG['password']);
 
 
   if (empty($_SERVER['PHP_AUTH_DIGEST'])) {
@@ -613,40 +620,126 @@ function script_url() {
 /******************************************************************************/
 /******************************************************************************/
 
-function user() {
-  if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    // FIXME: process form.
-
-    redirect_to_self();
-  }
+function page_css() {
+  header('Content-Type: text/css');
 ?>
-<html><head><title>PHP-WebDAV</title></head><body><form method="post"><div style="position: absolute; top: 5%; left: 50%; transform: translate(-50%, -5%);">
-<div style="width: 250px; text-align: center;"><h4>PHP-WebDAV</h4></div>
-<p><div style="width: 250px; text-align: right;">Username:&nbsp;<input type="text" name="username" width=20></div></p>
-<p><div style="width: 250px; text-align: right;">Password:&nbsp;<input type="password" name="password" placeholder="********" width=20></div></p>
-<div style="width: 250px; text-align: center;"><input type="submit" value="Login"></div>
-</div></form></body></html>
+  #content {
+    position: absolute;
+    top: 5%;
+    left: 50%;
+    transform: translate(-50%, -5%)
+  }
+
+  #title {
+    width: 250px;
+    text-align: center;
+  }
+
+  .right {
+    width: 250px;
+    text-align: right;
+  }
 <?php
 }
 
-function admin() {
+function page_js() {?>
+  // JS
+<?php }
+
+function page_welcome() {
   if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // FIXME: process form.
 
-    redirect_to_self();
+    header('Location: '.$_SERVER['REQUEST_URI']);
+    exit;
   }
-?>
-<html><head><title>PHP-WebDAV Admin</title></head><body><form method="post"><div style="position: absolute; top: 5%; left: 50%; transform: translate(-50%, -5%);">
-<center><h4>PHP-WebDAV Admin</h4></center>
-Password:&nbsp;<input type="password" name="password" placeholder="********">&nbsp;<input type="submit" value="Login"><br>
-</div></form></body></html>
-<?php
+
+  $dom = base_page('PHP-WebDAV');
+  $content = (new Element ($dom->getElementById('content')));
+  $content->add('p')->append('blabla<br/>blabla');
+  $content->add('p')->append('<a href="'.$_SERVER['SCRIPT_NAME'].'?admin">Admin</a>');
+
+  echo $dom->saveHTML();
 }
 
-function redirect_to_self() {
-  // FIXME: do we need to add portnumbers? likely?
-  header('Location: '.
-         ((!empty($_SERVER['HTTPS'] && $_SERVER['HTTPS'] !== 'off') || $_SERVER['SERVER_PORT'] == 443) ? 'https://' : 'http://').
-         $_SERVER['HTTP_HOST'].$_SERVER['REQUEST_URI']);
-  exit;
+function page_user() {
+  if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    // FIXME: process form.
+
+    header('Location: '.$_SERVER['REQUEST_URI']);
+    exit;
+  }
+
+  $dom = base_page('PHP-WebDAV');
+  $form = (new Element ($dom->getElementById('content')))->add('form', array('method' => 'post'));
+  $form->add('p')->add('div', array('class' => 'right'))->append('Username:&#160;<input type="text" name="username" width="20"/>');
+  $form->add('p')->add('div', array('class' => 'right'))->append('Password:&#160;<input type="password" name="password" placeholder="********" width="20"/>');
+  $form->add('p')->add('div', array('class' => 'right'))->append('<input type="submit" value="Login"/>');
+
+  echo $dom->saveHTML();
+}
+
+function page_admin() {
+  if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    // FIXME: process form.
+
+    header('Location: '.$_SERVER['REQUEST_URI']);
+    exit;
+  }
+
+  $dom = base_page('PHP-WebDAV Admin');
+  $form = (new Element ($dom->getElementById('content')))->add('form', array('method' => 'post'));
+  $form->append('Password:&#160;')->append('<input type="password" name="password" placeholder="********"/>&#160;');
+  $form->append('<input type="submit" value="Login"/><br/>');
+
+  echo $dom->saveHTML();
+}
+
+function base_page($title) {
+  $dom = DOMImplementation::createDocument(null, 'html', DOMImplementation::createDocumentType('html'));
+  $dom->formatOutput = true;
+
+  $html = new Element($dom->documentElement);
+  $head = $html->add('head');
+  $head->add('title', null, $title);
+  $head->add('link', array('rel' => 'stylesheet', 'href' => $_SERVER['SCRIPT_NAME'].'?css'));
+  $head->add('script', array('src' => $_SERVER['SCRIPT_NAME'].'?js'));
+  $div = $html->add('body')->add('div', array('id' => 'content'))->add('div', array('id' => 'title'))->add('h4', null, $title);
+
+  return $dom;
+}
+
+class Element {
+  public $element;
+  public $dom;
+
+  function __construct($element) {
+    $this->element = $element;
+    $this->dom = $element->ownerDocument;
+  }
+
+  public function add($name, $attributes = null, $value = null) {
+    $this->element->appendChild($tag = $this->dom->createElement($name));
+
+    // FIXME: set '' as id namespace instead of xml:
+    if ($attributes !== null)
+      foreach ($attributes as $attribute_name => $attribute_value) {
+        $tag->setAttribute($attribute_name, $attribute_value);
+        if ($attribute_name == 'id')
+          $tag->setIdAttribute('id', true);
+      }
+
+    if ($value !== null)
+      $tag->appendChild($this->dom->createTextNode($value));
+
+    return new Element($tag);
+  }
+
+  public function append($xml) {
+    $fragment = $this->dom->createDocumentFragment();
+    $fragment->appendXML($xml);
+    $this->element->appendChild($fragment);
+    
+    return $this;
+  }
 }
