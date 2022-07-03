@@ -10,13 +10,12 @@
   For more information, see below the licence notice.
 */
 
-$_CONFIG = array(
-  'user'            => '',
-  'password'        => 'CHANGEME',
+$_CONFIG = [
   'admin_password'  => 'CHANGEME',
-  'root'            => dirname(__FILE__), 
+  'users'           => ['user' => 'CHANGEME'],
+  'root'            => dirname(__FILE__),
   'session_timeout' => 900
-);
+];
 
 /*
   Copyright V.
@@ -66,30 +65,27 @@ function davlog($text) {
 }
 
 function check_web_interface() {
-  if (array_search($_SERVER['REQUEST_METHOD'], array('GET', 'POST')) === false)
+  global $_CONFIG;
+
+  if (array_search($_SERVER['REQUEST_METHOD'], ['GET', 'POST']) === false)
     return;
 
-  // FIXME: Welcome page & admin change pass timeout based on file modify/create time.
-
-  // FIXME: remove welcome test
   // Don't function_exists(). Not authenticated yet.
-  if (array_search($_SERVER['QUERY_STRING'], array('css', 'js', 'user', 'admin', 'welcome')) === false)
-    return;
+  if (array_search($_SERVER['QUERY_STRING'], ['css', 'js', 'user', 'admin']) !== false) {
+    call_user_func('page_'.$_SERVER['QUERY_STRING']);
+    exit;
+  }
 
-  $function = 'page_'.$_SERVER['QUERY_STRING'];
-  $function();
-
-  exit;
+  if (!isset($_CONFIG['users']) || count($_CONFIG['users']) == 0) {
+    page_index();
+    exit;
+  }
 }
 
 function auth_digest() {
   global $_CONFIG;
   
-  $realm = 'Restricted area';
-
-  //user => password
-  $users = array($_CONFIG['user'] => $_CONFIG['password']);
-
+  $realm = 'PHP-WebDAV';
 
   if (empty($_SERVER['PHP_AUTH_DIGEST'])) {
       header('HTTP/1.1 401 Unauthorized');
@@ -102,12 +98,12 @@ function auth_digest() {
 
   // analyze the PHP_AUTH_DIGEST variable
   if (!($data = http_digest_parse($_SERVER['PHP_AUTH_DIGEST'])) ||
-      !isset($users[$data['username']]))
+      !isset($_CONFIG['users'][$data['username']]))
       die('Wrong Credentials!');
 
 
   // generate the valid response
-  $A1 = md5($data['username'] . ':' . $realm . ':' . $users[$data['username']]);
+  $A1 = md5($data['username'] . ':' . $realm . ':' . $_CONFIG['users'][$data['username']]);
   $A2 = md5($_SERVER['REQUEST_METHOD'].':'.$data['uri']);
   $valid_response = md5($A1.':'.$data['nonce'].':'.$data['nc'].':'.$data['cnonce'].':'.$data['qop'].':'.$A2);
 
@@ -122,8 +118,8 @@ function auth_digest() {
 function http_digest_parse($txt)
 {
     // protect against missing data
-    $needed_parts = array('nonce'=>1, 'nc'=>1, 'cnonce'=>1, 'qop'=>1, 'username'=>1, 'uri'=>1, 'response'=>1);
-    $data = array();
+    $needed_parts = ['nonce'=>1, 'nc'=>1, 'cnonce'=>1, 'qop'=>1, 'username'=>1, 'uri'=>1, 'response'=>1];
+    $data = [];
     $keys = implode('|', array_keys($needed_parts));
 
     preg_match_all('@(' . $keys . ')=(?:([\'"])([^\2]+?)\2|([^\s,]+))@', $txt, $matches, PREG_SET_ORDER);
@@ -187,7 +183,8 @@ function call_if_exists($function) {
 
   if (function_exists($function)) {
 // FIXME
-davlog($_SERVER['HTTP_X_LITMUS'].' ');
+if (isset($_SERVER['HTTP_X_LITMUS']))
+  davlog($_SERVER['HTTP_X_LITMUS'].' ');
     davlog(quoted_printable_encode($target)."\n");
     $function($_CONFIG['root'], $target, $content);
     exit;
@@ -321,9 +318,9 @@ function method_propfind($root, $target, $content) {
     if (!isset($content->prop))
       $content->addChild('prop');
 //    foreach (preg_filter('/^prop_(.*)/', '$1', get_defined_functions()['user']) as $prop)
-    foreach (array('creationdate', 'displayname', 'getcontentlanguage', 'getcontentlength',
-                   'getcontenttype', 'getetag', 'getlastmodified', 'lockdiscovery', 'resourcetype',
-                   'source', 'supportedlock') as $prop)
+    foreach (['creationdate', 'displayname', 'getcontentlanguage', 'getcontentlength',
+              'getcontenttype', 'getetag', 'getlastmodified', 'lockdiscovery', 'resourcetype',
+              'source', 'supportedlock'] as $prop)
       $content->prop->addChild($prop);
       $content->prop->addChild($prop);
   }
@@ -449,13 +446,17 @@ function method_proppatch($root, $target, $content) {
     //if ($content->getNamespaces(true)[''] != 'DAV:')
     //  exit_with_response_code(400);
 
-    $props = array();  
+    $props = [];  
     foreach ($content->xpath("//*[local-name()='prop']") as $prop) {
       $mode = $prop->xpath("..")[0]->getName();
-      $namespace = array_values($prop->children()->getNamespaces(true))[0];
+      $namespace = $prop->children()->getNamespaces(true);
+      if (count($namespace))
+        $namespace = $namespace[0];
+      else
+        $namespace = 'DAV:';
       $name = $prop->children($namespace)->getName();
       $value = (string)$prop->children($namespace)->$name;
-      
+
       switch ($mode) {
         case 'set':
           xattr_set($root.$target, "PHP-WebDAV['".$namespace."']['".$name."']", $value);
@@ -467,12 +468,12 @@ function method_proppatch($root, $target, $content) {
           davlog('Unknown mode: '.$mode."\n");
           break;
       }
-      array_push($props, array('mode' => $mode, 'namespace' => $namespace, 'name' => $name, 'value' => $value));
+      array_push($props, ['mode' => $mode, 'namespace' => $namespace, 'name' => $name, 'value' => $value]);
     }
 
     $content = $props;
   } else {
-    $content = array();
+    $content = [];
   }
 }
 
@@ -650,12 +651,12 @@ function page_css() {
   }
 
   #title {
-    width: 250px;
+    width: 280px;
     text-align: center;
   }
 
   .right {
-    width: 250px;
+    width: 280px;
     text-align: right;
   }
 <?php
@@ -667,22 +668,19 @@ function page_js() {
 <?php
 }
 
-function page_welcome() {
-  if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    // FIXME: process form.
-
-    header('Location: '.$_SERVER['REQUEST_URI']);
-    exit;
-  }
+function page_index() {
+  // FIXME: admin change pass timeout based on file modify/create time.
 
   $dom = base_page('PHP-WebDAV');
   $content = (new Element($dom->getElementById('content')));
   $content->add('p')->append('blabla<br/>blabla');
-  $content->add('p')->append('click: ')->add('a', ['href' => $_SERVER['SCRIPT_NAME'].'?admin'], 'Admin')->parent()->append('.');
+  $content->add('p')->append('click: ')->add('a', ['href' => $_SERVER['SCRIPT_NAME'].'?admin'], 'Admin')->parent()->append('.<br/>');
+  $content->add('p')->append('click: ')->add('a', ['href' => $_SERVER['SCRIPT_NAME'].'?user'], 'User')->parent()->append('.');
 
   echo $dom->saveHTML();
 }
 
+// FIXME: check timeout in post too
 function page_user() {
   global $_CONFIG;
 
@@ -694,21 +692,22 @@ function page_user() {
     if (!$_SESSION['user_validated']) {
       array_validate($_POST, ['user' => '', 'password' => '']);
 
-      if ($_POST['user'] != $_CONFIG['user'] || $_POST['password'] != $_CONFIG['password']) {
+      // FIXME: force user/password to be non-empty
+      if (!array_key_exists($_POST['user'], $_CONFIG['users']) || $_CONFIG['users'][$_POST['user']] != $_POST['password']) {
         if ($_POST['user'] != '' || $_POST['password'] != '')
           $_SESSION['user_login_error'] = true;          
       } else {
         session_regenerate_id(true);
 
-        $_SESSION['user'] = $_CONFIG['user'];
+        $_SESSION['user'] = $_POST['user'];
         $_SESSION['user_remote_addr'] = $_SERVER['REMOTE_ADDR'];
         $_SESSION['user_last_seen'] = time();
         $_SESSION['user_validated'] = true;
       }
-    } elseif (isset($_POST['submit']) && $_POST['submit'] == 'Logout') {
-      array_unset($_SESSION, ['user', 'user_remote_addr', 'user_validated', 'user_last_seen', 'user_login_error']);
+    } elseif (isset($_POST['logout']) && $_POST['logout'] == 'Logout') {
+      array_unset($_SESSION, ['user', 'user_remote_addr', 'user_validated', 'user_last_seen', 'user_login_error', 'user_change_result']);
     } else {
-      user_post();
+      user_post($_SESSION['user']);
     }
 
     header('Location: '.$_SERVER['REQUEST_URI']);
@@ -728,9 +727,9 @@ function page_user() {
   
   if (!$_SESSION['user_validated']) {
     $div = $form->add('p')->add('div', ['class' => 'right'])->append('Username:&#160;');
-    $div->add('input', ['type' => 'text', 'name' => 'user', 'width' => '20']);
+    $div->add('input', ['type' => 'text', 'name' => 'user', 'size' => '28']);
     $div = $form->add('p')->add('div', ['class' => 'right'])->append('Password:&#160;');
-    $div->add('input', ['type' => 'password', 'name' => 'password', 'placeholder' => '********', 'width' => '20']);
+    $div->add('input', ['type' => 'password', 'name' => 'password', 'placeholder' => '********', 'size' => '28']);
     $form->add('p')->add('div', ['class' => 'right'])->add('input', ['type' => 'submit', 'value' => 'Login']);
     if ($_SESSION['user_login_error']) {
       $form->add('p')->add('div', ['class' => 'right'])->append('Username and/or password invalid.');
@@ -744,14 +743,45 @@ function page_user() {
 }
 
 function user(&$dom, &$form, $user) {
-  $form->add('p')->append('Hi '.$user.'!');
-  $form->add('p')->add('input', ['type' => 'submit', 'name' => 'submit', 'value' => 'Logout']);
+  $form->append('Hi '.$user.'!');
+  $form->append('<br/>Old password:&#160;')->add('input', ['type' => 'password', 'name' => 'oldpassword', 'placeholder' => '********', 'size' => '28']);
+  $form->append('<br/>New password:&#160;')->add('input', ['type' => 'password', 'name' => 'newpassword', 'placeholder' => '********', 'size' => '28']);
+  $form->append('<br/>Repeat new password:&#160;')->add('input', ['type' => 'password', 'name' => 'repeatpassword', 'placeholder' => '********', 'size' => '28']);
+  $form->append('<br/>')->add('input', ['type' => 'submit', 'name' => 'change', 'value' => 'Change Password']);
+  $form->add('input', ['type' => 'submit', 'name' => 'logout', 'value' => 'Logout']);
+  if (isset($_SESSION['user_change_result'])) {
+    $form->add('p')->append($_SESSION['user_change_result']);
+    unset($_SESSION['user_change_result']);
+  }
 }
 
-function user_post() {
-  // FIXME: process form
+function user_post($user) {
+  global $_CONFIG;
+
+  if ($_POST['oldpassword'] == '')
+    return;
+
+  if ($_POST['oldpassword'] != $_CONFIG['users'][$user]) {
+    $_SESSION['user_change_result'] = 'Old password invalid.';
+    return;
+  }
+  
+  if ($_POST['newpassword'] == '') {
+    $_SESSION['user_change_result'] = 'New password can not be empty.';
+    return;
+  }
+  
+  if ($_POST['newpassword'] != $_POST['repeatpassword']) {
+    $_SESSION['user_change_result'] = 'New passwords not the same.';
+    return;
+  }
+
+  change_user_password($user, $_POST['newpassword']);
+
+  $_SESSION['user_change_result'] = 'Password changed.';
 }
 
+// FIXME: check timeout in post too
 function page_admin() {
   global $_CONFIG;
 
@@ -763,6 +793,7 @@ function page_admin() {
     if (!$_SESSION['admin_validated']) {
       array_validate($_POST, ['password' => '']);
 
+      // FIXME: force passwords to be non-empty
       if ($_POST['password'] != $_CONFIG['admin_password']) {
         if ($_POST['password'] != '')
           $_SESSION['admin_login_error'] = true;          
@@ -773,7 +804,7 @@ function page_admin() {
         $_SESSION['admin_last_seen'] = time();
         $_SESSION['admin_validated'] = true;
       }
-    } elseif (isset($_POST['submit']) && $_POST['submit'] == 'Logout') {
+    } elseif (isset($_POST['logout']) && $_POST['logout'] == 'Logout') {
       array_unset($_SESSION, ['admin_remote_addr', 'admin_validated', 'admin_last_seen', 'admin_login_error']);
     } else {
       admin_post();
@@ -795,8 +826,10 @@ function page_admin() {
   $form = (new Element($dom->getElementById('content')))->add('form', ['method' => 'post']);
 
   if (!$_SESSION['admin_validated']) {
-    $form->append('Password:&#160;')->add('input', array('type' => 'password', 'name' => 'password', 'placeholder' => '********'));
-    $form->append('&#160;')->add('input', array('type' => 'submit', 'value' => 'Login'));
+    $form->append('Password:&#160;');
+    $form->add('input', ['type' => 'password', 'name' => 'password', 'placeholder' => '********', 'size' => '22']);
+    $form->append('&#160;');
+    $form->add('input', ['type' => 'submit', 'value' => 'Login']);
     if ($_SESSION['admin_login_error']) {
       $form->add('p')->append('Password invalid.');
       $_SESSION['admin_login_error'] = false;
@@ -809,12 +842,53 @@ function page_admin() {
 }
 
 function admin(&$dom, &$form) {
-  $form->add('p')->append('Hi Admin!');
-  $form->add('p')->add('input', ['type' => 'submit', 'name' => 'submit', 'value' => 'Logout']);
+  global $_CONFIG;
+  
+  if (count($_CONFIG['users']) > 0) {
+    $table = $form->add('table');
+    foreach ($_CONFIG['users'] as $user => $password) {
+      $row = $table->add('tr');
+      $row->add('td')->append($user);
+      $row->add('td')->add('input', ['type' => 'text', 'name' => 'password['.$user.']', 'value' => $password, 'size' => '28']);;
+      $row->add('td')->add('input', ['type' => 'submit', 'name' => 'change['.$user.']', 'value' => 'Change Password']);
+      $row->add('td')->add('input', ['type' => 'submit', 'name' => 'delete['.$user.']', 'value' => 'Delete']);
+    }
+  }
+
+  $form->add('p')->append('Username:&#160;')->add('input', ['type' => 'text', 'name' => 'new_user', 'size' => '28']);
+  $form->add('p')->append('Password:&#160;')->add('input', ['type' => 'text', 'name' => 'new_password', 'placeholder' => '********', 'size' => '28']);
+  $form->add('p')->add('input', ['type' => 'submit', 'name' => 'add', 'value' => 'Add User']);
+  $form->add('p')->add('input', ['type' => 'submit', 'name' => 'logout', 'value' => 'Logout']);
 }
 
 function admin_post() {
-  // FIXME: process form
+  if (isset($_POST['change']))
+    change_user_password(key($_POST['change']), $_POST['password'][key($_POST['change'])]);
+  elseif (isset($_POST['add']))
+    add_user($_POST['new_user'], $_POST['new_password']);
+  elseif (isset($_POST['delete']))
+    delete_user(key($_POST['delete']));
+}
+
+function change_user_password($user, $password) {
+  global $_CONFIG;
+
+  echo 'change: '.$user.' '.$password;
+  exit;
+}
+
+function add_user($user, $password) {
+  global $_CONFIG;
+
+  echo 'add: '.$user.' '.$password;
+  exit;
+}
+
+function delete_user($user) {
+  global $_CONFIG;
+
+  echo 'delete: '.$user;
+  exit;
 }
 
 function base_page($title) {
@@ -824,9 +898,9 @@ function base_page($title) {
   $html = new Element($dom->documentElement);
   $head = $html->add('head');
   $head->add('title', null, $title);
-  $head->add('link', array('rel' => 'stylesheet', 'href' => $_SERVER['SCRIPT_NAME'].'?css'));
-  $head->add('script', array('src' => $_SERVER['SCRIPT_NAME'].'?js'));
-  $div = $html->add('body')->add('div', array('id' => 'content'))->add('div', array('id' => 'title'))->add('h4', null, $title);
+  $head->add('link', ['rel' => 'stylesheet', 'href' => $_SERVER['SCRIPT_NAME'].'?css']);
+  $head->add('script', ['src' => $_SERVER['SCRIPT_NAME'].'?js']);
+  $div = $html->add('body')->add('div', ['id' => 'content'])->add('div', ['id' => 'title'])->add('h4', null, $title);
 
   return $dom;
 }
