@@ -71,7 +71,7 @@ function check_web_interface() {
     return;
 
   // Don't function_exists(). Not authenticated yet.
-  if (array_search($_SERVER['QUERY_STRING'], ['css', 'js', 'user', 'admin']) !== false) {
+  if (array_search($_SERVER['QUERY_STRING'], ['css', 'js', 'user', 'admin', 'diff']) !== false) {
     call_user_func('page_'.$_SERVER['QUERY_STRING']);
     exit;
   }
@@ -321,7 +321,6 @@ function method_propfind($root, $target, $content) {
     foreach (['creationdate', 'displayname', 'getcontentlanguage', 'getcontentlength',
               'getcontenttype', 'getetag', 'getlastmodified', 'lockdiscovery', 'resourcetype',
               'source', 'supportedlock'] as $prop)
-      $content->prop->addChild($prop);
       $content->prop->addChild($prop);
   }
 
@@ -623,6 +622,15 @@ function script_url() {
 /******************************************************************************/
 /******************************************************************************/
 
+function update() {
+  // download if newer to dav.new.php
+  // run new dav (in namespace?) which will do the upgrading, 
+  // importing config & replacing dav.php
+  // check signatures before run and as checksum after config import
+}
+
+/******************************************************************************/
+/******************************************************************************/
 
 function session() {
   session_name('PHP-WebDAV');
@@ -710,8 +718,7 @@ function page_user() {
       user_post($_SESSION['user']);
     }
 
-    header('Location: '.$_SERVER['REQUEST_URI']);
-    exit;
+    redirect($_SERVER['REQUEST_URI']);
   }
 
   if (!$_SESSION['user_validated'] || $_SESSION['user_remote_addr'] != $_SERVER['REMOTE_ADDR'] ||    
@@ -810,8 +817,7 @@ function page_admin() {
       admin_post();
     }
 
-    header('Location: '.$_SERVER['REQUEST_URI']);
-    exit;
+    redirect($_SERVER['REQUEST_URI']);
   }
 
   if (!$_SESSION['admin_validated'] || $_SESSION['admin_remote_addr'] != $_SERVER['REMOTE_ADDR'] ||    
@@ -846,6 +852,10 @@ function admin(&$dom, &$form) {
   
   if (count($_CONFIG['users']) > 0) {
     $table = $form->add('table');
+    $row = $table->add('tr');
+    $row->add('td')->append('User');
+    $row->add('td')->append('Password');
+    $row->add('td', ['colspan' => '2']);
     foreach ($_CONFIG['users'] as $user => $password) {
       $row = $table->add('tr');
       $row->add('td')->append($user);
@@ -856,9 +866,11 @@ function admin(&$dom, &$form) {
   }
 
   $form->add('p')->append('Username:&#160;')->add('input', ['type' => 'text', 'name' => 'new_user', 'size' => '28']);
-  $form->add('p')->append('Password:&#160;')->add('input', ['type' => 'text', 'name' => 'new_password', 'placeholder' => '********', 'size' => '28']);
-  $form->add('p')->add('input', ['type' => 'submit', 'name' => 'add', 'value' => 'Add User']);
-  $form->add('p')->add('input', ['type' => 'submit', 'name' => 'logout', 'value' => 'Logout']);
+  $p = $form->add('p')->append('Password:&#160;');
+  $p->add('input', ['type' => 'text', 'name' => 'new_password', 'placeholder' => '********', 'size' => '28']);
+  $p->append('&#160;')->add('input', ['type' => 'submit', 'name' => 'add', 'value' => 'Add User']);
+  $p = $form->add('p')->add('input', ['type' => 'submit', 'name' => 'diff', 'value' => 'Show diff'])->parent();
+  $p->append('&#160;')->add('input', ['type' => 'submit', 'name' => 'logout', 'value' => 'Logout']);
 }
 
 function admin_post() {
@@ -868,6 +880,72 @@ function admin_post() {
     add_user($_POST['new_user'], $_POST['new_password']);
   elseif (isset($_POST['delete']))
     delete_user(key($_POST['delete']));
+  elseif (isset($_POST['diff']))
+    redirect($_SERVER['SCRIPT_NAME'].'?diff');
+}
+
+function page_diff() {
+  session();
+  array_validate($_SESSION, ['admin_validated' => false]);
+
+  // FIXME: session validation & timeout
+  if (!$_SESSION['admin_validated'] || ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['back'])))
+    redirect($_SERVER['SCRIPT_NAME'].'?admin');
+
+  if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['dist'])) {
+    make_dist();
+    redirect($_SERVER['REQUEST_URI']);
+  }
+
+  $dom = base_page('PHP-WebDAV Diff');
+  $content = (new Element($dom->getElementsByTagName('body')[0]));
+  $content->element->removeChild($content->element->firstChild);
+  $form = $content->add('form', ['method' => 'post'])->add('p');
+  $form->add('input', ['type' => 'submit', 'name' => 'back', 'value' => 'Back']);
+  $form->append('&#160;')->add('input', ['type' => 'submit', 'name' => 'dist', 'value' => 'Make Dist']);
+  if (isset($_SESSION['dist_result'])) {
+    $form->append('&#160;&#160;'.$_SESSION['dist_result']);
+    unset($_SESSION['dist_result']);
+  }
+  $table = $content->add('table', ['cellspacing' => '0']);
+
+  // FIXME: preferably do the diff in php
+  // FIXME: don't hardcode paths
+  exec('diff --strip-trailing-cr -u dist/dav.php dav.php | awk \'FNR < 3 {next} /^@/ {match($2, /.([^,]+)/, a); l = a[1]; match($3, /.([^,]+)/, a); r = a[1]; print "@:::" $0} /^\-/ {print "-:" l++ "::" $0} /^\+/ {print "+::" r++ ":" $0} /^ / {print "=:" l++ ":" r++ ":" $0}\'', $diff);
+
+  $colors = ['@' => ['#badfff', '#ddf4ff'], '=' => ['#ffffff', '#ffffff'],
+             '-' => ['#ffd7d5', '#ffebe9'], '+' => ['#ccffd8', '#e6ffec']];
+
+  foreach ($diff as $line) {
+    $row = $table->add('tr');
+    preg_match('/^(.):([0-9]*):([0-9]*):(.*)$/', $line, $matches);
+    list(, $color, $old_line_number, $new_line_number, $line) = $matches;
+    $line = '<code>'.str_replace(' ', '&#160;', htmlspecialchars($line, ENT_XML1, 'UTF-8')).'</code>';
+
+    if ($color == '@') {
+      $row->add('td', ['colspan' => '2', 'style' => 'background: '.$colors[$color][0].';']);
+    } else {
+      $row->add('td', ['style' => 'background: '.$colors[$color][0].';'])->append('&#160;&#160;'.$old_line_number.'&#160;&#160;');
+      $row->add('td', ['style' => 'background: '.$colors[$color][0].';'])->append('&#160;&#160;'.$new_line_number.'&#160;&#160;');
+    }
+
+    $row->add('td', ['style' => 'background: '.$colors[$color][1].';'])->append($line);
+  }
+
+  echo $dom->saveHTML();
+  exit;
+}
+
+function make_dist() {
+  // FIXME: do it in php. no fixed filenames. error checking (mkdir). Do check local TZ for rename.
+  mkdir('dist');
+  exec("sed -r \"s/( *'admin_password' *=> ').*(',?)/\\1CHANGEME\\2/;s/( *'users' *=> \\[').*(' => ').*('\\],?)/\\1user\\2CHANGEME\\3/\" dav.php > dist/dav.php");
+  // FIXME: timezone hack
+  //$dated_file = 'dav.'.date('YMD-His', stat('dist/dav.php')['mtime']).'.php';
+  $dated_file = 'dav.'.exec('date -d @$(stat -c %Y dist/dav.php) +%Y%m%d-%H%M%S').'.php';
+  exec('cp -ap dist/dav.php dist/'.$dated_file);
+
+  $_SESSION['dist_result'] = 'File dist/'.$dated_file.' created.';
 }
 
 function change_user_password($user, $password) {
@@ -891,6 +969,11 @@ function delete_user($user) {
   exit;
 }
 
+function redirect($to) {
+  header('Location: '.$to);
+  exit;
+}
+
 function base_page($title) {
   $dom = DOMImplementation::createDocument(null, 'html', DOMImplementation::createDocumentType('html'));
   $dom->formatOutput = true;
@@ -900,7 +983,7 @@ function base_page($title) {
   $head->add('title', null, $title);
   $head->add('link', ['rel' => 'stylesheet', 'href' => $_SERVER['SCRIPT_NAME'].'?css']);
   $head->add('script', ['src' => $_SERVER['SCRIPT_NAME'].'?js']);
-  $div = $html->add('body')->add('div', ['id' => 'content'])->add('div', ['id' => 'title'])->add('h4', null, $title);
+  $html->add('body')->add('div', ['id' => 'content'])->add('div', ['id' => 'title'])->add('h4', null, $title);
 
   return $dom;
 }
@@ -932,9 +1015,11 @@ class Element {
   }
 
   public function append($xml) {
-    $fragment = $this->dom->createDocumentFragment();
-    $fragment->appendXML($xml);
-    $this->element->appendChild($fragment);
+    if (trim($xml) != '') {
+      $fragment = $this->dom->createDocumentFragment();
+      $fragment->appendXML($xml);
+      $this->element->appendChild($fragment);
+    }
     
     return $this;
   }
